@@ -1,8 +1,20 @@
 #include <iostream>
 #include <string>
+#include <string.h>
+#include <stdlib.h>
 #include <gtk/gtk.h>
 #include <lldb/API/LLDB.h>
+#define STB_C_LEXER_IMPLEMENTATION
+#include "stb_c_lexer.h"
 
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+
+const char lit =  'a'/*   */ ;
+const int intlit =  1023;
+const float floatlit =  123.5676;
+#if 0
+'a''b'
+#endif
 struct scrolltomark {
     GtkWidget* view;
     GtkTextMark *last_pos;
@@ -33,7 +45,7 @@ struct Debugger {
 
 Debugger dbg;
 
-struct DebuggerState {
+struct LLDBDebuggerHelper {
     lldb::SBTarget AddTarget(const char* fileName) {
         lldb::SBError error;
         targetFileName = fileName;
@@ -66,6 +78,189 @@ struct DebuggerState {
     lldb::SBModule module;
 };
 
+const char* KnownKeywords[] = {
+    "break",
+    "case",
+    "continue",
+    "default",
+    "do",
+    "else",
+    "for",
+    "goto",
+    "if",
+    "return",
+    "sizeof",
+    "switch",
+    "while",
+};
+
+const char* KnownTypes[] = {
+    "auto",
+    "char",
+    "const",
+    "double",
+    "enum",
+    "extern",
+    "float",
+    "int",
+    "long",
+    "register",
+    "short",
+    "signed",
+    "static",
+    "struct",
+    "typedef",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+};
+
+int IsKnownThing(const char** list, int length, const char* start, const char* end) {
+    int n = end - start + 1;
+    for (int i=0;i<length;i++) {
+        if (strncmp(list[i],start,n)==0 &&
+            strlen(list[i]) == n) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int IsKnownKeyword(const char* start, const char* end) {
+    return IsKnownThing(KnownKeywords,ARRAY_SIZE(KnownKeywords),start,end);
+}
+
+int IsKnownType(const char* start, const char* end) {
+    return IsKnownThing(KnownTypes,ARRAY_SIZE(KnownTypes),start,end);
+}
+
+struct DebuggerState {
+    LLDBDebuggerHelper   *lldbHelper;
+    PangoFontDescription *base_font_desc;
+
+    GtkTextTag* base_tag;
+    GtkTextTag* keyword_tag;
+    GtkTextTag* type_tag;
+    GtkTextTag* current_line_tag;
+    GtkTextTag* syntax_tags[CLEX_first_unused_token];
+};
+
+static void
+InitializeDebuggerState(DebuggerState* state) {
+    assert(state);
+    state->base_font_desc = pango_font_description_from_string ("monospace 12");
+
+    GdkRGBA bgcolor, fgcolor;
+    gdk_rgba_parse(&bgcolor,"black");
+    gdk_rgba_parse(&fgcolor,"gray");
+
+    state->base_tag = gtk_text_tag_new("base");
+    g_object_set(state->base_tag, "weight", PANGO_WEIGHT_NORMAL,
+            "background-rgba", &bgcolor,
+            "foreground-rgba", &fgcolor, NULL);
+
+    state->current_line_tag = gtk_text_tag_new("current_line_tag");
+    gdk_rgba_parse(&bgcolor,"#202020");
+    g_object_set(state->current_line_tag, "weight", PANGO_WEIGHT_NORMAL,
+            "background-rgba", &bgcolor, NULL);
+
+#define CREATETAG(tag,color)                                    \
+    state->tag = gtk_text_tag_new(#tag);                        \
+    gdk_rgba_parse(&fgcolor,color);                             \
+    g_object_set(state->tag,                                    \
+            "weight", PANGO_WEIGHT_NORMAL,                      \
+            "foreground-rgba", &fgcolor, NULL);
+
+    CREATETAG(keyword_tag,"blue");
+    CREATETAG(type_tag,"yellow");
+    memset(state->syntax_tags,0,sizeof(state->syntax_tags));
+
+#define CREATETOKENTAG(token,color)                             \
+    CREATETAG(syntax_tags[token],color)
+
+    CREATETOKENTAG(CLEX_id,"lightgray");
+    CREATETOKENTAG(CLEX_dqstring,"magenta");
+    CREATETOKENTAG(CLEX_charlit,"red");
+    CREATETOKENTAG(CLEX_intlit,"green");
+    CREATETOKENTAG(CLEX_floatlit,"green");
+}
+
+static void
+DestroyDebuggerState(DebuggerState* state) {
+    assert(state);
+    pango_font_description_free (state->base_font_desc);
+}
+
+static GtkTextBuffer*
+CreateSyntaxedTextBuffer(DebuggerState* state, GtkWidget* view, gchar *contents, gsize length)
+{
+    GtkTextBuffer *buffer;
+    GtkTextTagTable *tags;
+
+    gtk_widget_modify_font (view, state->base_font_desc);
+
+    buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
+
+    tags = gtk_text_buffer_get_tag_table(buffer);
+    gtk_text_tag_table_add(tags,state->base_tag);
+    gtk_text_tag_table_add(tags,state->keyword_tag);
+    gtk_text_tag_table_add(tags,state->type_tag);
+    gtk_text_tag_table_add(tags,state->current_line_tag);
+    for (int i=0;i<ARRAY_SIZE(state->syntax_tags);i++) {
+        if (state->syntax_tags[i]) {
+            gtk_text_tag_table_add(tags,state->syntax_tags[i]);
+        }
+    }
+
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(buffer, &end);
+
+
+    stb_lexer lexer;
+    char* strings_buffer = (char*)malloc(1<<16);
+    char* laststart = (char*)contents;
+    stb_c_lexer_init(&lexer,contents,contents+length,strings_buffer,1<<16);
+    while (stb_c_lexer_get_token(&lexer)) {
+#if 0
+        if (lexer.token == CLEX_parse_error) {
+            break;
+        }
+#endif
+        if (laststart != lexer.where_firstchar) {
+            gtk_text_buffer_insert_with_tags(buffer,&end,
+                    laststart,lexer.where_firstchar - laststart,
+                    state->base_tag,NULL);
+        }
+
+        GtkTextTag *tag = state->base_tag;
+
+        laststart = lexer.where_firstchar;
+        if (state->syntax_tags[lexer.token]) {
+            if (lexer.token == CLEX_id)
+            {
+                if (IsKnownKeyword(lexer.where_firstchar,lexer.where_lastchar)) {
+                    tag = state->keyword_tag;
+                } else if (IsKnownType(lexer.where_firstchar,lexer.where_lastchar)) {
+                    tag = state->type_tag;
+                } else {
+                    tag = state->syntax_tags[lexer.token];
+                }
+            }
+            else {
+                tag = state->syntax_tags[lexer.token];
+            }
+        } else {
+        }
+        gtk_text_buffer_insert_with_tags(buffer,&end,
+                laststart,lexer.where_lastchar - laststart + 1,
+                state->base_tag,tag,NULL);
+        laststart = lexer.where_lastchar + 1;
+    }
+
+    return buffer;
+}
+
 static void
 activate (GtkApplication* app,
           gpointer        user_data)
@@ -74,10 +269,10 @@ activate (GtkApplication* app,
 
     DebuggerState* state = (DebuggerState*)user_data;
 
-    lldb::SBSymbol mainsymbol = state->GetSymbol("main");
-    std::string mainsFileName = state->GetSymbolsFileName(mainsymbol);
+    lldb::SBSymbol mainsymbol = state->lldbHelper->GetSymbol("main");
+    std::string mainsFileName = state->lldbHelper->GetSymbolsFileName(mainsymbol);
 
-    uint32_t linenumber = state->GetSymbolsLineNumber(mainsymbol);
+    uint32_t linenumber = state->lldbHelper->GetSymbolsLineNumber(mainsymbol);
 
     window = gtk_application_window_new (app);
     gtk_window_set_title (GTK_WINDOW (window), "Test");
@@ -109,6 +304,10 @@ activate (GtkApplication* app,
     view = gtk_text_view_new ();
     gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
     gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
+    GdkRGBA bgcolor, fgcolor;
+    gdk_rgba_parse(&bgcolor,"black");
+    gdk_rgba_parse(&fgcolor,"white");
+    gtk_widget_override_background_color(view, GTK_STATE_FLAG_NORMAL,&bgcolor);
     gtk_container_add (GTK_CONTAINER (scrolled), view);
     gtk_stack_add_titled (GTK_STACK (stack), scrolled, "","");
 
@@ -118,37 +317,17 @@ activate (GtkApplication* app,
     if (g_file_get_contents (mainsFileName.c_str(), &contents, &length, NULL))
     {
         GtkTextBuffer *buffer;
+        buffer = CreateSyntaxedTextBuffer(state,view,contents,length);
 
-        buffer = gtk_text_view_get_buffer (GTK_TEXT_VIEW (view));
-        gtk_text_buffer_set_text (buffer, contents, length);
-
-        PangoFontDescription *font_desc;
-        font_desc = pango_font_description_from_string ("monospace 12");
-        gtk_widget_modify_font (view, font_desc);
-        pango_font_description_free (font_desc);
-        /*
-        gtk_text_buffer_create_tag (buffer, "font", "font", "fixed", NULL); 
-        */
-
-        GtkTextIter start, end;
-
-        gtk_text_buffer_get_start_iter (buffer, &start);
-        gtk_text_buffer_get_end_iter(buffer, &end);
-        /*
-        gtk_text_buffer_apply_tag_by_name (buffer, "font", &start, &end);
-        */
-
-        GdkColor color;
-        gdk_color_parse("gray",&color);
-        gtk_text_buffer_create_tag (buffer, "bold", "weight", PANGO_WEIGHT_BOLD, "background-gdk", &color, NULL);
+        GtkTextIter start,end;
         gtk_text_buffer_get_iter_at_line(buffer, &start, linenumber);
         gtk_text_buffer_get_iter_at_line(buffer, &end, linenumber+1);
-        gtk_text_buffer_apply_tag_by_name (buffer, "bold", &start, &end);
+        gtk_text_buffer_apply_tag(buffer,state->current_line_tag,&start,&end);
 
-        GtkTextMark *last_pos;
-        last_pos = gtk_text_buffer_create_mark (buffer, "last_pos", &end, FALSE);
+        GtkTextMark *scrollmark;
+        scrollmark = gtk_text_buffer_create_mark (buffer, "scrollmark", &start, FALSE);
 
-        scrolltomark* stm = new scrolltomark(view,last_pos);
+        scrolltomark* stm = new scrolltomark(view,scrollmark);
         g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,scrolltoline,stm,NULL);
 
         g_free (contents);
@@ -167,8 +346,13 @@ main (int    argc,
     int status;
 
     if (argc < 2) return -1;
+
     DebuggerState state;
-    state.AddTarget(argv[1]);
+    InitializeDebuggerState(&state);
+
+    LLDBDebuggerHelper lldbHelper;
+    state.lldbHelper = &lldbHelper;
+    lldbHelper.AddTarget(argv[1]);
 
     app = gtk_application_new ("my.test", G_APPLICATION_FLAGS_NONE);
     g_signal_connect (app, "activate", G_CALLBACK (activate), &state);
