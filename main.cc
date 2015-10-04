@@ -6,7 +6,7 @@
 #include <lldb/API/LLDB.h>
 #define STB_C_LEXER_IMPLEMENTATION
 #include "stb_c_lexer.h"
-
+#include "linenum.h"
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 
 int bar = 'a'+'\n'+'\t' + 'd';
@@ -336,6 +336,58 @@ LoadWindowSettings(MyApplicationWindow* mywindow)
     g_key_file_unref(key_file);
 }
 
+#if 0
+static gboolean
+OnTextViewDraw(GtkTextView* w, cairo_t* cr, gpointer user_data)
+{
+    GtkTextBuffer* buffer = gtk_text_view_get_buffer(w);
+    GtkTextIter start,end;
+    gtk_text_buffer_get_bounds(buffer,&start,&end);
+    gchar* text = gtk_text_buffer_get_text(buffer,&start,&end,false);
+    auto pangoc = gtk_widget_get_pango_context((GtkWidget*)w);
+    auto pangol = pango_layout_new(pangoc);
+
+    pango_layout_set_markup(pangol,"1\n2\n3\n",6);
+
+    pango_layout_set_alignment(pangol,PANGO_ALIGN_RIGHT);
+    int width;
+    int height;
+    pango_layout_get_pixel_size(pangol,&width,&height);
+
+
+    printf("width == %d, height = %d\n",width,height);
+
+    gtk_text_view_set_border_window_size(w,GTK_TEXT_WINDOW_RIGHT, width + 4);
+    int y;
+    gtk_text_view_window_to_buffer_coords(w,GTK_TEXT_WINDOW_RIGHT, 2, 0, NULL, &y);
+    //y = -y;
+    printf("y == %d\n",y);
+
+    auto window = gtk_text_view_get_window(w,GTK_TEXT_WINDOW_RIGHT);
+    printf("w == %p\n",window);
+    auto style = gtk_widget_get_style_context((GtkWidget*)w);
+    printf("s == %p\n",style);
+    gtk_render_layout(style,cr,2,y,pangol);
+    /*
+        text_view.style.paint_layout(window=window,
+                state_type=Gtk.STATE_NORMAL,
+                use_text=True,
+                area=None,
+                widget=text_view,
+                detail=None,
+                x=2,
+                y=y,
+                layout=layout)
+
+                */
+        printf("draw %p, %p, %p\n",text,pangoc, pangol);
+
+
+    //g_object_unref(pangol);
+    return FALSE;
+}
+#endif
+
 static void
 activate (GtkApplication* app,
           gpointer        user_data)
@@ -390,6 +442,11 @@ activate (GtkApplication* app,
     view = gtk_text_view_new ();
     gtk_text_view_set_editable (GTK_TEXT_VIEW (view), FALSE);
     gtk_text_view_set_cursor_visible (GTK_TEXT_VIEW (view), FALSE);
+#if 0
+    g_signal_connect(view,"draw",G_CALLBACK(OnTextViewDraw),NULL);
+#endif
+    linenum_init(view);
+    show_line_numbers(view,true);
     GdkRGBA bgcolor, fgcolor;
     gdk_rgba_parse(&bgcolor,"black");
     gdk_rgba_parse(&fgcolor,"white");
@@ -448,4 +505,3 @@ main (int    argc,
 
     return status;
 }
-
