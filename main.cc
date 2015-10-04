@@ -9,12 +9,16 @@
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 
-const char lit =  'a'/*   */ ;
-const int intlit =  1023;
-const float floatlit =  123.5676;
-#if 0
-'a''b'
-#endif
+int bar = 'a'+'\n'+'\t' + 'd';
+int foo = 0x1234;
+
+struct MyApplicationWindow {
+    GtkApplication parent;
+
+    int width, height;
+    bool maximized;
+};
+
 struct scrolltomark {
     GtkWidget* view;
     GtkTextMark *last_pos;
@@ -165,19 +169,22 @@ InitializeDebuggerState(DebuggerState* state) {
     g_object_set(state->current_line_tag, "weight", PANGO_WEIGHT_NORMAL,
             "background-rgba", &bgcolor, NULL);
 
-#define CREATETAG(tag,color)                                    \
-    state->tag = gtk_text_tag_new(#tag);                        \
+#define CREATETAGI(tag,name,color)                              \
+    state->tag = gtk_text_tag_new(name);                        \
     gdk_rgba_parse(&fgcolor,color);                             \
     g_object_set(state->tag,                                    \
             "weight", PANGO_WEIGHT_NORMAL,                      \
             "foreground-rgba", &fgcolor, NULL);
+
+#define CREATETAG(tag,color)                                    \
+    CREATETAGI(tag,#tag,color)
 
     CREATETAG(keyword_tag,"blue");
     CREATETAG(type_tag,"yellow");
     memset(state->syntax_tags,0,sizeof(state->syntax_tags));
 
 #define CREATETOKENTAG(token,color)                             \
-    CREATETAG(syntax_tags[token],color)
+    CREATETAGI(syntax_tags[token],#token, color)
 
     CREATETOKENTAG(CLEX_id,"lightgray");
     CREATETOKENTAG(CLEX_dqstring,"magenta");
@@ -213,13 +220,14 @@ CreateSyntaxedTextBuffer(DebuggerState* state, GtkWidget* view, gchar *contents,
         }
     }
 
-    GtkTextIter end;
+    gtk_text_buffer_set_text(buffer,contents,length);
+    GtkTextIter start, end;
+    gtk_text_buffer_get_start_iter(buffer, &start);
     gtk_text_buffer_get_end_iter(buffer, &end);
 
 
     stb_lexer lexer;
     char* strings_buffer = (char*)malloc(1<<16);
-    char* laststart = (char*)contents;
     stb_c_lexer_init(&lexer,contents,contents+length,strings_buffer,1<<16);
     while (stb_c_lexer_get_token(&lexer)) {
 #if 0
@@ -227,15 +235,7 @@ CreateSyntaxedTextBuffer(DebuggerState* state, GtkWidget* view, gchar *contents,
             break;
         }
 #endif
-        if (laststart != lexer.where_firstchar) {
-            gtk_text_buffer_insert_with_tags(buffer,&end,
-                    laststart,lexer.where_firstchar - laststart,
-                    state->base_tag,NULL);
-        }
-
-        GtkTextTag *tag = state->base_tag;
-
-        laststart = lexer.where_firstchar;
+        GtkTextTag* tag;
         if (state->syntax_tags[lexer.token]) {
             if (lexer.token == CLEX_id)
             {
@@ -250,15 +250,90 @@ CreateSyntaxedTextBuffer(DebuggerState* state, GtkWidget* view, gchar *contents,
             else {
                 tag = state->syntax_tags[lexer.token];
             }
-        } else {
+            gtk_text_buffer_get_iter_at_offset(buffer,&start,lexer.where_firstchar-contents);
+#if 0
+            if (lexer.token == CLEX_charlit) {
+                gtk_text_buffer_get_iter_at_offset(buffer,&end,lexer.where_lastchar-contents);
+            } else
+#endif
+            {
+                gtk_text_buffer_get_iter_at_offset(buffer,&end,lexer.where_lastchar-contents+1);
+            }
+            gtk_text_buffer_apply_tag(buffer,tag,&start,&end);
         }
-        gtk_text_buffer_insert_with_tags(buffer,&end,
-                laststart,lexer.where_lastchar - laststart + 1,
-                state->base_tag,tag,NULL);
-        laststart = lexer.where_lastchar + 1;
     }
 
     return buffer;
+}
+
+static gboolean
+WindowStateEvent(GtkWidget *widget,
+        GdkEventWindowState  *event,
+        gpointer   user_data)
+{
+    MyApplicationWindow* mywindow = (MyApplicationWindow*)user_data;
+    mywindow->maximized = (event->new_window_state & GDK_WINDOW_STATE_MAXIMIZED);
+    return FALSE;
+}
+
+static gboolean
+WindowConfigureEvent(GtkWidget *widget,
+        GdkEventConfigure  *event,
+        gpointer   user_data)
+{
+    MyApplicationWindow* mywindow = (MyApplicationWindow*)user_data;
+    mywindow->width = event->width;
+    mywindow->height = event->height;
+    return FALSE;
+}
+
+static void
+WindowDestroy(GtkWidget* w, gpointer user_data)
+{
+    MyApplicationWindow* mywindow = (MyApplicationWindow*)user_data;
+
+    GKeyFile* key_file = g_key_file_new();
+    g_key_file_set_integer (key_file, "WindowState", "Width", mywindow->width);
+    g_key_file_set_integer (key_file, "WindowState", "Height", mywindow->height);
+    g_key_file_set_integer (key_file, "WindowState", "Maximized", mywindow->maximized);
+
+    g_key_file_save_to_file (key_file, "state.ini", NULL);
+
+    g_key_file_unref(key_file);
+}
+
+static void
+LoadWindowSettings(MyApplicationWindow* mywindow)
+{
+    mywindow->width = mywindow->height = -1;
+    mywindow->maximized = FALSE;
+    GKeyFile* key_file = g_key_file_new();
+    if (!g_key_file_load_from_file(key_file, "state.ini",G_KEY_FILE_NONE,NULL)) return;
+
+    GError* error;
+
+    error  = NULL;
+    mywindow->width = g_key_file_get_integer(key_file, "WindowState", "Width", &error);
+    if (error != NULL)
+    {
+        mywindow->width = -1;
+    }
+
+    error  = NULL;
+    mywindow->height = g_key_file_get_integer(key_file, "WindowState", "Height", &error);
+    if (error != NULL)
+    {
+        mywindow->height = -1;
+    }
+
+    error  = NULL;
+    mywindow->maximized = g_key_file_get_integer(key_file, "WindowState", "Maximized", &error);
+    if (error != NULL)
+    {
+        mywindow->maximized = 0;
+    }
+
+    g_key_file_unref(key_file);
 }
 
 static void
@@ -277,6 +352,17 @@ activate (GtkApplication* app,
     window = gtk_application_window_new (app);
     gtk_window_set_title (GTK_WINDOW (window), "Test");
     gtk_window_set_default_size (GTK_WINDOW (window), 200, 200);
+    MyApplicationWindow* mywindow = new MyApplicationWindow;
+    LoadWindowSettings(mywindow);
+    gtk_window_set_default_size (GTK_WINDOW (window),
+            mywindow->width,
+            mywindow->height);
+
+    if (mywindow->maximized)
+        gtk_window_maximize (GTK_WINDOW (window));
+    g_signal_connect (window, "window-state-event", G_CALLBACK (WindowStateEvent), mywindow);
+    g_signal_connect (window, "configure-event", G_CALLBACK (WindowConfigureEvent), mywindow);
+    g_signal_connect (window, "destroy", G_CALLBACK (WindowDestroy), mywindow);
 
     GtkWidget *vbox;
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL,0);

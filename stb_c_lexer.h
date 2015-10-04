@@ -624,7 +624,7 @@ int stb_c_lexer_get_token(stb_lexer *lexer)
                         return stb__clex_token(lexer, CLEX_parse_error, start,start);
                         if (p == lexer->eof || *p != '\'')
                         return stb__clex_token(lexer, CLEX_parse_error, start,p);
-                        return stb__clex_token(lexer, CLEX_charlit, start, p+1);
+                        return stb__clex_token(lexer, CLEX_charlit, start, p);
                         })
             goto single_char;
 
@@ -634,7 +634,7 @@ int stb_c_lexer_get_token(stb_lexer *lexer)
                 if (p[1] == 'x' || p[1] == 'X') {
                     char *q = p+2;
 #ifdef STB__CLEX_use_stdlib
-                    lexer->int_number = strtol((char *) p, (char **) q, 16);
+                    lexer->int_number = strtol((char *) p, (char **) &q, 16);
 #else
                     stb__clex_int n=0;
                     while (q != lexer->eof) {
