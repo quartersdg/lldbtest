@@ -476,7 +476,7 @@ activate (GtkApplication* app,
         g_free (contents);
     }
 
-    gtk_text_view_set_left_margin (GTK_TEXT_VIEW (view), 30);
+    //gtk_text_view_set_left_margin (GTK_TEXT_VIEW (view), 30);
     gtk_widget_show (view);
     gtk_widget_show_all (window);
 }
@@ -505,3 +505,4 @@ main (int    argc,
 
     return status;
 }
+

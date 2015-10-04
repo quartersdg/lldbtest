@@ -21,7 +21,7 @@
 #include <gtk/gtk.h>
 #include "linenum.h"
 
-#define DV(x) x
+#define DV(x)
 
 static gint min_number_window_width;
 static gboolean line_number_visible = FALSE;
@@ -47,7 +47,7 @@ static gint calculate_min_number_window_width(GtkWidget *widget)
 /* taken from gedit and gtksourceview */
 /* originated from gtk+/tests/testtext.c */
 
-    static void
+static void
 get_lines (GtkTextView  *text_view,
         gint          y1,
         gint          y2,
@@ -107,7 +107,7 @@ get_lines (GtkTextView  *text_view,
     *countp = count;
 }
 
-    static inline PangoAttribute *
+static inline PangoAttribute *
 line_numbers_foreground_attr_new(GtkWidget *widget)
 {
     GtkStyleContext *context;
@@ -121,13 +121,28 @@ line_numbers_foreground_attr_new(GtkWidget *widget)
             (guint16)(rgb.blue  * 65535));
 }
 
-    static gint
+static inline PangoAttribute *
+line_numbers_background_attr_new(GtkWidget *widget)
+{
+    GtkStyleContext *context;
+    GdkRGBA          rgb;
+
+    gdk_rgba_parse(&rgb,"darkgray");
+
+    return pango_attr_background_new((guint16)(rgb.red   * 65535),
+            (guint16)(rgb.green * 65535),
+            (guint16)(rgb.blue  * 65535));
+}
+
+static gint
 line_numbers_expose (GtkWidget *widget, cairo_t *event)
 {
     GtkTextView *text_view;
     PangoLayout *layout;
     PangoAttrList *alist;
+    PangoAttrList *alistcurline;
     PangoAttribute *attr;
+    PangoAttribute *attrcurline;
     GArray *numbers;
     GArray *pixels;
     gint y1, y2;
@@ -140,7 +155,6 @@ line_numbers_expose (GtkWidget *widget, cairo_t *event)
     cairo_rectangle_list_t *clips;
 
     if (line_number_visible) {
-        printf("draw line numbers\n");
 
         text_view = GTK_TEXT_VIEW (widget);
 
@@ -233,10 +247,20 @@ line_numbers_expose (GtkWidget *widget, cairo_t *event)
         attr->end_index = G_MAXUINT;
         pango_attr_list_insert(alist, attr);
         pango_layout_set_attributes(layout, alist);
-        pango_attr_list_unref(alist);
+
+        alistcurline = pango_attr_list_new();
+        attrcurline = line_numbers_background_attr_new(widget);
+        attrcurline->start_index = 0;
+        attrcurline->end_index = G_MAXUINT;
+        pango_attr_list_insert(alistcurline, attrcurline);
+        attrcurline = line_numbers_foreground_attr_new(widget);
+        attrcurline->start_index = 0;
+        attrcurline->end_index = G_MAXUINT;
+        pango_attr_list_insert(alistcurline, attrcurline);
 
         /* Draw fully internationalized numbers! */
 
+        int switched = 0;
         for (i = 0; i < count; i++) {
             gint pos;
 
@@ -249,6 +273,15 @@ line_numbers_expose (GtkWidget *widget, cairo_t *event)
             g_snprintf (str, sizeof (str),
                     "%d", g_array_index (numbers, gint, i) + 1);
 
+            if ((1+g_array_index(numbers,gint,i))==488) {
+                switched = 1;
+                pango_layout_set_attributes(layout, alistcurline);
+            }
+            else if (switched)
+            {
+                switched = 0;
+                pango_layout_set_attributes(layout, alist);
+            }
             pango_layout_set_text (layout, str, -1);
 
             gtk_render_layout (gtk_widget_get_style_context(widget),
