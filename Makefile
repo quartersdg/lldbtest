@@ -1,3 +1,10 @@
-test: main.cc Makefile stb_c_lexer.h linenum.c
-	g++ -std=c++11  -o test main.cc linenum.c -g -O0 -I/usr/lib/llvm-3.6/include/ -llldb-3.6 -Wno-deprecated-declarations `pkg-config --cflags --libs gtk+-3.0`
+all: asynctest target
 
+asynctest: asynctest.cc Makefile filemap.cc lldb.cc
+	g++ -std=c++11 -O0 -g -o $@ $< `pkg-config --cflags --libs sdl2 gl` -I/usr/lib/llvm-3.6/include/ -L/usr/lib/llvm-3.6/lib/ -llldb-3.6
+
+target: target.c
+	gcc -O0 -g -o $@ $^
+
+clean:
+	rm asynctest target
